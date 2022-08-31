@@ -36,6 +36,8 @@ use tokio::time::sleep as delay_for;
 use tonic::transport::Channel;
 use web30::client::Web3;
 
+/// The total terminal difficulty for "The Merge" where Ethereum becomes PoS
+pub const ETH_MERGE_TTD: u128 = 58750000000000000000000u128;
 /// The execution speed governing all loops in this file
 /// which is to say all loops started by Orchestrator main
 /// loop except the relayer loop
@@ -108,6 +110,7 @@ pub async fn eth_oracle_main_loop(
     gravity_contract_address: EthAddress,
     fee: Coin,
 ) {
+    let merge_terminal_total_difficulty: Uint256 = ETH_MERGE_TTD.into();
     let our_cosmos_address = cosmos_key.to_address(&contact.get_prefix()).unwrap();
     let long_timeout_web30 = Web3::new(&web3.get_url(), Duration::from_secs(120));
     let block_delay = get_block_delay(&web3).await;
@@ -132,7 +135,7 @@ pub async fn eth_oracle_main_loop(
         let latest_eth_block = web3.eth_block_number().await;
         let latest_cosmos_block = contact.get_chain_status().await;
 
-        match (latest_eth_block, latest_cosmos_block) {
+        match (&latest_eth_block, latest_cosmos_block) {
             (Ok(latest_eth_block), Ok(ChainStatus::Moving { block_height })) => {
                 trace!(
                     "Latest Eth block {} Latest Cosmos block {}",
@@ -175,6 +178,20 @@ pub async fn eth_oracle_main_loop(
 
                 delay_for(DELAY).await;
                 continue;
+            }
+        }
+
+        let latest_concise_block = web3
+            .eth_get_block_by_number(latest_eth_block.unwrap())
+            .await;
+        if let Ok(block) = latest_concise_block {
+            if block.total_difficulty >= merge_terminal_total_difficulty {
+                error!(
+                    "ORCHESTRATOR WILL HALT! - Eth Latest Total Difficulty is {}, which is at least the Terminal Total Difficulty for The Merge ({})",
+                    block.total_difficulty,
+                    merge_terminal_total_difficulty,
+                );
+                return;
             }
         }
 
